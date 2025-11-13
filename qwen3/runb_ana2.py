@@ -1,42 +1,10 @@
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
-os.environ["TRANSFORMERS_NO_TF"] = "1"
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-os.environ["USE_TF"] = "0"
-
-from transformers import AutoTokenizer
-from modeling_qwen3 import Qwen3ForCausalLM, Qwen3ForNeuronSignal
-import sys, torch
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from prepare_data import DataProcessor
-from draw import DrawNeuron, DrawFFT
 import numpy as np
-from sklearn.metrics import r2_score
-
-model_name = "Qwen/Qwen3-0.6B"
-
-# load the tokenizer and the model
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-model = Qwen3ForNeuronSignal.from_pretrained(
-    model_name,
-    torch_dtype="auto",
-    device_map="auto"
-)
-
-# model = Qwen3ForCausalLM.from_pretrained(
-#     model_name,
-#     torch_dtype="auto",
-#     device_map="auto"
-# )
-
-# # sentence = (
-# #     "<think>"
-# #     "Okay, the user wants a short introduction to a large language model. Let me start by recalling what I know about LLMs. They're big language models, right? So I should mention their ability to understand and generate text. Maybe start with the basics: how they work. Then explain their capabilities, like answering questions, creating content, etc. Also, highlight their advantages over traditional models. Oh, and maybe touch on their applications in various fields. Keep it concise but informative. Make sure it's clear and easy to understand. Avoid technical jargon. Let me structure it in a way that flows well from introduction to main points."
-# #     "</think>"
-# #     "A large language model (LLM) is a type of artificial intelligence system designed to understand and generate human language. These models are trained on vast datasets to comprehend complex texts, answer questions, and create creative content. They are capable of tasks like writing essays, generating stories, or even translating languages. Unlike traditional models, LLMs can process and respond to a wide range of inputs, making them versatile and powerful for various applications in fields like healthcare, education, and beyond."
-# #     "<|im_end|>"
-# # )
+import matplotlib.pyplot as plt
+from scipy import signal
+import matplotlib
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import oopsi
 
 sentence = """
 Inventors have long dreamed of creating machines that think. This desire datesback to at least the time of ancient Greece. The mythical ﬁgures Pygmalion,Daedalus, and Hephaestus may all be interpreted as legendary inventors, andGalatea, Talos, and Pandora may all be regarded as artiﬁcial life (Ovid and Martin,2004; Sparkes, 1996; Tandy, 1997).When programmable computers were ﬁrst conceived, people wondered whethersuch machines might become intelligent, over a hundred years before one wasbuilt (Lovelace, 1842). Today,artiﬁcial intelligence(AI) is a thriving ﬁeld withmany practical applications and active research topics. We look to intelligentsoftware to automate routine labor, understand speech or images, make diagnosesin medicine and support basic scientiﬁc research.In the early days of artiﬁcial intelligence, the ﬁeld rapidly tackled and solvedproblems that are intellectually diﬃcult for human beings but relatively straight-forward for computers—problems that can be described by a list of formal, math-ematical rules. The true challenge to artiﬁcial intelligence proved to be solvingthe tasks that are easy for people to perform but hard for people to describeformally—problems that we solve intuitively, that feel automatic, like recognizingspoken words or faces in images.This book is about a solution to these more intuitive problems. This solution isto allow computers to learn from experience and understand the world in terms ofa hierarchy of concepts, with each concept deﬁned through its relation to simplerconcepts. By gathering knowledge from experience, this approach avoids the needfor human operators to formally specify all the knowledge that the computer needs.The hierarchy of concepts enables the computer to learn complicated concepts bybuilding them out of simpler ones. If we draw a graph showing how these concepts
@@ -56,131 +24,82 @@ CHAPTER 1. INTRODUCTIONperspective is that it would be deeply interesting to und
 CHAPTER 1. INTRODUCTIONToday, neuroscience is regarded as an important source of inspiration for deeplearning researchers, but it is no longer the predominant guide for the ﬁeld.The main reason for the diminished role of neuroscience in deep learningresearch today is that we simply do not have enough information about the brainto use it as a guide. To obtain a deep understanding of the actual algorithms usedby the brain, we would need to be able to monitor the activity of (at the veryleast) thousands of interconnected neurons simultaneously. Because we are notable to do this, we are far from understanding even some of the most simple andwell-studied parts of the brain (Olshausen and Field, 2005).Neuroscience has given us a reason to hope that a single deep learning algorithmcan solve many diﬀerent tasks. Neuroscientists have found that ferrets can learn to“see” with the auditory processing region of their brain if their brains are rewiredto send visual signals to that area (Von Melchner et al., 2000). This suggests thatmuch of the mammalian brain might use a single algorithm to solve most of thediﬀerent tasks that the brain solves. Before this hypothesis, machine learningresearch was more fragmented, with diﬀerent communities of researchers studyingnatural language processing, vision, motion planning and speech recognition. Today,these application communities are still separate, but it is common for deep learningresearch groups to study many or even all these application areas simultaneously.We are able to draw some rough guidelines from neuroscience. The basicidea of having many computational units that become intelligent only via theirinteractions with each other is inspired by the brain. The neocognitron (Fukushima,1980) introduced a powerful model architecture for processing images that wasinspired by the structure of the mammalian visual system and later became thebasis for the modern convolutional network (LeCun et al., 1998b), as we will seein section 9.10. Most neural networks today are based on a model neuron calledtherectiﬁed linear unit. The original cognitron (Fukushima, 1975) introduceda more complicated version that was highly inspired by our knowledge of brainfunction. The simpliﬁed modern version was developed incorporating ideas frommany viewpoints, with Nair and Hinton (2010) and Glorot et al. (2011a) citingneuroscience as an inﬂuence, and Jarrett et al. (2009) citing more engineering-oriented inﬂuences. While neuroscience is an important source of inspiration, itneed not be taken as a rigid guide. We know that actual neurons compute verydiﬀerent functions than modern rectiﬁed linear units, but greater neural realismhas not yet led to an improvement in machine learning performance. Also, whileneuroscience has successfully inspired several neural network architectures, wedo not yet know enough about biological learning for neuroscience to oﬀer muchguidance for the learning algorithms we use to train these architectures.
 """
 
-input_ids = tokenizer.encode(sentence, return_tensors="pt").to(model.device)[:, :4096]
-seq_len = input_ids.shape[1]
+# --- 1. 模拟数据 (请用您的真实数据替换这部分) ---
+# 假设:
+N_TRIALS = 29       # 试验总数
+N_NEURONS = 1024    # 您的神经元数量
+N_TIMEPOINTS = 4096 # 每个试验的时间点
+SAMPLING_RATE = 1 # 假设的采样率 (Hz) - !! 这对PSD计算至关重要
 
-model_inputs = {
-    "input_ids": input_ids,
-    "attention_mask": torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool, device=model.device)).unsqueeze(0).unsqueeze(0),
-    "full_hidden_states": True,
-}
+np_load = np.load("outcomes/runb_hidden_states.npy")  # shape: (N_TRIALS, N_TIMEPOINTS, N_NEURONS)
+list_of_trials = [np_load[t, 0] for t in range(N_TRIALS)]  # 用真实数据替换
 
-with torch.no_grad():
-    hidden_states = model(**model_inputs).hidden_states#[0].float().cpu().numpy()
+F_signal = list_of_trials[-2][:, 0]  # 取第一个trial的第一个神经元信号作为示例
 
-for idx, h in enumerate(hidden_states):
-    hh = h[0].t().float().cpu().numpy()
-    DrawFFT().draw_fft_individual(hh[:36], f"outcomes/runb_fft_stem_log_{idx}.png", log_scale=True)
-    DrawFFT().draw_fft_individual(hh[:36], f"outcomes/runb_fft_stem_loglog_{idx}.png", loglog_scale=True)
+T = N_TIMEPOINTS
+dt = 0.020
+lam = 0.1
+tau = 1.5
+sigma = 0.2
+
+# fix random seed
+np.random.seed(42)
+
+# --- 2. 运行 Py-OOPSI (Fast-OOPSI 算法) ---
+# F_signal 是我们的输入数据
+# 我们需要提供时间步长 dt
+# tau_est 是算法的初始猜测值，这里我们假设知道大概范围
+print("正在运行 Py-OOPSI 算法...")
+
+try:
+    # fast() 函数会返回推断的 spikes
+    # 注意：根据您安装的 py-oopsi 版本 (原版或 simple-oopsi fork)
+    # API 可能略有不同。这是 'simple-oopsi' (pip install py-oopsi 常见的安装) 的 API
+    inferred_spikes, _ = oopsi.fast(F_signal, dt=dt)
+    inferred_spikes = np.asarray(inferred_spikes, dtype=float)
+    print("Spike 推断完成。")
+
+    print(f"inferred_spikes shape: {inferred_spikes.shape}")
+    print(f"inferred_spikes (first 20 values): {inferred_spikes[:20]}")
+
+except Exception as e:
+    print(f"Py-OOPSI 运行出错: {e}")
+    print("请检查 'py-oopsi' 库是否已正确安装。")
+    inferred_spikes = np.zeros_like(F_signal) # 出错时返回空值
 
 
-# print(len(hidden_states))
-# for i, hs in enumerate(hidden_states):
-#     print(i, hs.shape)
+# --- 3. 可视化结果 (Visualize Results) ---
 
-# Save all hidden states in a single file
-# np.save("outcomes/runb_hidden_states.npy", [hs.float().cpu().numpy() for hs in hidden_states])
+plt.figure(figsize=(18, 7))
 
-# np.save("outcomes/runb_hidden_states.npy", hidden_states)
-# print(hidden_states.shape)
-# exit()
+# (a) 绘制荧光信号
+plt.plot(F_signal, 'b', label='Noisy Fluorescence (F)', alpha=0.6)
 
-# hidden_states = np.load("outcomes/runb_hidden_states.npy").T
-# DrawFFT().draw_fft_individual(hidden_states[100:164], "outcomes/runb_fft_stem.png")
-# # do High-pass filter on hidden states channel-wise
-# freq_threshold = 5
-# for i in range(hidden_states.shape[0]):
-#     freq_domain = np.fft.fft(hidden_states[i])
-#     freq_domain[:freq_threshold] = 0
-#     freq_domain[-freq_threshold:] = 0
-#     hidden_states[i] = np.fft.ifft(freq_domain).real
-# DrawFFT().draw_fft_individual(hidden_states[100:164], "outcomes/runb_fft_hpf.png")
+# # (b) 绘制真实的 Spikes (Ground Truth)
+# #     为了看清楚，我们用 stem 图，并放大 spike
+# (true_markers, true_stems, _) = plt.stem(
+#     np.where(true_spikes > 0.5)[0],  # Spike 的时间点
+#     true_spikes[true_spikes > 0.5] * np.max(F_signal) * 0.8, # Spike 的高度
+#     linefmt='g-', markerfmt='go', basefmt=' ',
+#     label='Ground Truth Spikes'
+# )
+# plt.setp(true_stems, 'linewidth', 1.5)
+
+# (c) 绘制推断的 Spikes (Inferred Spikes)
+#     py-oopsi 的输出是 spike 的“概率”或“强度”，不是严格的 0/1
+#     我们同样用 stem 图来表示
+(inferred_markers, inferred_stems, _) = plt.stem(
+    np.arange(T), # 所有时间点
+    inferred_spikes * np.max(F_signal) * 0.7, # 缩放高度以便对比
+    linefmt='r-', markerfmt='ro', basefmt=' ',
+    label='Inferred Spikes (Py-OOPSI)'
+)
+plt.setp(inferred_stems, 'linewidth', 1, 'alpha', 0.7)
+plt.setp(inferred_markers, 'markersize', 4, 'alpha', 0.7)
 
 
-# device = 'cuda:0'
-# seq_len = hidden_states.shape[1]
-# model_inputs = {
-#     "inputs_embeds": torch.tensor(hidden_states.T, device=device, dtype=torch.bfloat16).unsqueeze(0),
-#     "attention_mask": torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0),
-# }
-
-# with torch.no_grad():
-#     outputs = model(**model_inputs)
-#     logits = outputs.logits.float().cpu().numpy()
-#     predictions = np.argmax(logits, axis=-1)
-
-# decoded_output = tokenizer.decode(predictions[0])
-# print(decoded_output)
-
-exit()
-
-hidden_states = np.load("outcomes/runb_hidden_states.npy").T
-with torch.no_grad():
-    logits = model.lm_head(torch.tensor(hidden_states.T, device=model.device, dtype=torch.bfloat16).unsqueeze(0)).float()
-    logits_softmax = torch.nn.functional.softmax(logits, dim=-1)
-
-# do Low-pass filter on hidden states channel-wise
-freq_threshold = 1
-for i in range(hidden_states.shape[0]):
-    freq_domain = np.fft.fft(hidden_states[i])
-    freq_domain[freq_threshold:-freq_threshold] = 0
-    hidden_states[i] = np.fft.ifft(freq_domain).real
-
-with torch.no_grad():
-    logits_lpf = model.lm_head(torch.tensor(hidden_states.T, device=model.device, dtype=torch.bfloat16).unsqueeze(0)).float()
-    logits_lpf_softmax = torch.nn.functional.softmax(logits_lpf, dim=-1)
-
-# print("Original LPF R2:", r2_score(logits.flatten(), logits_lpf.flatten()))
-
-# collect input_ids prob from logits_softmax and logits_lpf_softmax
-
-input_ids_prob = logits_softmax.gather(2, input_ids.unsqueeze(-1)).squeeze(-1)[0].flatten().float().cpu().numpy()
-input_ids_lpf_prob = logits_lpf_softmax.gather(2, input_ids.unsqueeze(-1)).squeeze(-1)[0].flatten().float().cpu().numpy()
-
-# find the most changed token prob
-prob_diff = input_ids_prob - input_ids_lpf_prob
-most_changed_idx_decrease = np.argsort(prob_diff)[-50:][::-1]
-most_changed_idx_increase = np.argsort(prob_diff)[:50]
-
-print("Most increased token probs after LPF:")
-for idx in most_changed_idx_increase:
-    context = tokenizer.decode(input_ids[0, max(0, idx-10):min(input_ids.shape[1], idx+10)].cpu().numpy())
-    new_most_prob_token = torch.argmax(logits_lpf[0, idx]).item()
-    new_most_prob_token_str = tokenizer.decode(new_most_prob_token)
-    new_most_prob_token_prob = logits_lpf_softmax[0, idx, new_most_prob_token].item()
-    new_rank = torch.sum((logits_lpf_softmax[0, idx] > logits_lpf_softmax[0, idx, input_ids[0, idx]]).float()).item() + 1
-    new_context = tokenizer.decode(input_ids[0, max(0, idx-10):idx].cpu().numpy().tolist() + [new_most_prob_token] + input_ids[0, idx+1:min(input_ids.shape[1], idx+10)].cpu().numpy().tolist())
-    print(
-        f"Token idx: {idx}, \n"
-        f"Token: {tokenizer.decode(input_ids[0, idx].item())}, "
-        f"Original Prob: {input_ids_prob[idx]:.6f}, "
-        f"LPF Prob: {input_ids_lpf_prob[idx]:.6f}, "
-        f"Diff: {prob_diff[idx]:.6f}, \n"
-        f"Context: ...{context}..., \n"
-        f"New Token: {new_most_prob_token_str}, "
-        f"New Prob: {new_most_prob_token_prob:.6f}, "
-        f"New Rank: {new_rank}, \n"
-        f"New Context: ...{new_context}..."
-        f"\n"
-    )
-
-for idx in most_changed_idx_decrease:
-    context = tokenizer.decode(input_ids[0, max(0, idx-10):min(input_ids.shape[1], idx+10)].cpu().numpy())
-    new_most_prob_token = torch.argmax(logits_lpf[0, idx]).item()
-    new_most_prob_token_str = tokenizer.decode(new_most_prob_token)
-    new_most_prob_token_prob = logits_lpf_softmax[0, idx, new_most_prob_token].item()
-    new_rank = torch.sum((logits_lpf_softmax[0, idx] > logits_lpf_softmax[0, idx, input_ids[0, idx]]).float()).item() + 1
-    new_context = tokenizer.decode(input_ids[0, max(0, idx-10):idx].cpu().numpy().tolist() + [new_most_prob_token] + input_ids[0, idx+1:min(input_ids.shape[1], idx+10)].cpu().numpy().tolist())
-    print(
-        f"Token idx: {idx}, \n"
-        f"Token: {tokenizer.decode(input_ids[0, idx].item())}, "
-        f"Original Prob: {input_ids_prob[idx]:.6f}, "
-        f"LPF Prob: {input_ids_lpf_prob[idx]:.6f}, "
-        f"Diff: {prob_diff[idx]:.6f}, \n"
-        f"Context: ...{context}..., \n"
-        f"New Token: {new_most_prob_token_str}, "
-        f"New Prob: {new_most_prob_token_prob:.6f}, "
-        f"New Rank: {new_rank}, \n"
-        f"New Context: ...{new_context}..."
-        f"\n"
-    )
+plt.legend(loc='upper right')
+plt.xlabel(f'Time Points (dt={dt}s)')
+plt.ylabel('Fluorescence / Spike Strength')
+plt.title('Py-OOPSI (fast-oopsi) Spike Inference')
+plt.savefig('outcomes/py_oopsi_spike_inference.png', dpi=300)

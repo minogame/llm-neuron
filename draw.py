@@ -71,7 +71,7 @@ class DrawFFT:
         return
 
     @staticmethod
-    def draw_fft_individual(F, path='outcomes/fft_individual.png', sampling_rate=None):
+    def draw_fft_individual(F, path='outcomes/fft_individual.png', sampling_rate=None, log_scale=False, loglog_scale=False, term='Cell'):
         """
         在一个大图的N个子图上，为【每一个】细胞绘制其FFT频谱图。
 
@@ -116,15 +116,24 @@ class DrawFFT:
             cell_fft_magnitude = np.abs(np.fft.fft(F[i, :]))
             
             ax.plot(positive_freqs, cell_fft_magnitude[:n_positive_freqs])
-            ax.set_title(f'Cell {i + 1}')
+            ax.set_title(f'{term} {i + 1}')
             ax.grid(True)
+
+            if log_scale:
+                ax.set_yscale('log')
+                ax.set_ylim(1e-1, 1e4)
+
+            if loglog_scale:
+                ax.set_xscale('log')
+                ax.set_yscale('log')
+                ax.set_ylim(1e-1, 1e4)
 
         # 4. 清理多余的子图
         for i in range(n_cells, len(axes_flat)):
             axes_flat[i].axis('off')
 
         # 5. 添加总标题和公共坐标轴标签
-        fig.suptitle('FFT Spectrum for Each Cell', fontsize=16)
+        fig.suptitle(f'FFT Spectrum for Each {term}', fontsize=16)
         fig.supxlabel(xlabel) # 使用我们上面定义的 xlabel
         fig.supylabel('Magnitude')
         
@@ -134,7 +143,80 @@ class DrawFFT:
         return
 
     @staticmethod
-    def draw_fft_stem(F, path='outcomes/fft_stem.png', sampling_rate=None):
+    def draw_fft_individuals(Fs, path='outcomes/fft_individual.png', sampling_rate=None, log_scale=False, loglog_scale=False, term=None):
+        """
+        在一个大图的N个子图上，为【每一个】细胞绘制其FFT频谱图。
+
+        参数:
+        F (list[np.ndarray]): 输入矩阵，形状为 (n_cells, n_layers, n_timepoints)。
+        path (str): 保存输出图像的文件路径。
+        sampling_rate (float, optional): 数据的采样率（单位：Hz）。
+                                         如果提供，横轴将以赫兹为单位。
+                                         如果不提供，横轴将是0到0.5的归一化频率。
+        """
+        n_cells = len(Fs)
+        n_layers, n_timepoints = Fs[0].shape
+
+        # 1. 设置子图网格
+        ncols = n_layers
+        nrows = n_cells
+        fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 4, nrows * 3.5), squeeze=False)
+        axes_flat = axes.flatten()
+
+        # 2. 计算频率轴
+        n_positive_freqs = n_timepoints // 2
+        
+        if sampling_rate:
+            # 如果提供了采样率，计算真实的频率轴（单位：Hz）
+            # np.fft.fftfreq 可以直接通过 d=1/sampling_rate 计算出真实频率
+            freqs = np.fft.fftfreq(n_timepoints, d=1/sampling_rate)
+            xlabel = 'Frequency (Hz)'
+        else:
+            # 否则，使用归一化频率
+            freqs = np.fft.fftfreq(n_timepoints)
+            xlabel = 'Normalized Frequency'
+        
+        # 我们只关心正频率部分
+        positive_freqs = freqs[:n_positive_freqs]
+
+        # 3. 遍历每个细胞并绘图
+        for i in range(n_cells):
+            F = Fs[i]
+
+            for j in range(n_layers):
+                ax = axes_flat[i*n_layers + j]
+
+                cell_fft_magnitude = np.abs(np.fft.fft(F[j, :]))
+
+                ax.plot(positive_freqs, cell_fft_magnitude[:n_positive_freqs])
+                ax.set_title(f'Neuron {i} Layer {term[j]}')
+                ax.grid(True)
+
+                if log_scale:
+                    ax.set_yscale('log')
+                    ax.set_ylim(1e-1, 1e4)
+
+                if loglog_scale:
+                    ax.set_xscale('log')
+                    ax.set_yscale('log')
+                    ax.set_ylim(1e-1, 1e4)
+
+        # # 4. 清理多余的子图
+        # for i in range(n_cells, len(axes_flat)):
+        #     axes_flat[i].axis('off')
+
+        # 5. 添加总标题和公共坐标轴标签
+        fig.suptitle(f'FFT Spectrum for Each Cell in Different Layers', fontsize=16)
+        fig.supxlabel(xlabel) # 使用我们上面定义的 xlabel
+        fig.supylabel('Magnitude')
+        
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        plt.savefig(path)
+        plt.close(fig)
+        return
+    
+    @staticmethod
+    def draw_fft_stem(F, path='outcomes/fft_stem.png', sampling_rate=None, log_scale=False, loglog_scale=False):
         """
         使用【茎图】为每个细胞绘制FFT频谱图，使视觉效果更简洁。
         """
@@ -176,6 +258,13 @@ class DrawFFT:
 
             ax.set_title(f'Cell {i + 1}')
             ax.grid(True, linestyle='--', alpha=0.6)
+
+            if log_scale:
+                ax.set_yscale('log')
+            
+            if loglog_scale:
+                ax.set_xscale('log')
+                ax.set_yscale('log')
 
         for i in range(n_cells, len(axes_flat)):
             axes_flat[i].axis('off')
@@ -253,6 +342,7 @@ class DrawFFT:
         plt.savefig(path)
         plt.close(fig)
         return
+
 
 class DrawTSNE:
     
@@ -410,38 +500,59 @@ class DrawNeuron:
     @staticmethod
     def decompose_by_filter(
         data: Union[np.ndarray, List[float]],
-        fs: float = 1.0,
-        period_cutoffs: Dict[str, float] = None,
+        fs: float = 128.0,
         order: int = 5
     ) -> Dict[str, np.ndarray]:
-        """Decompose a sequence into long / band / short components (zero-phase filtering)."""
-        if period_cutoffs is None:
-            period_cutoffs = {'long': 30, 'short': 10}
+        """Decompose a sequence into Delta / Theta / Alpha / Beta / Gamma components (zero-phase filtering)."""
 
-        arr = np.asarray(data, dtype=float)
-        if arr.size < order * 3 + 1:
-            raise ValueError(f"Data too short (len={arr.size}) to apply a filter of order={order}.")
-
-        nyq = 0.5 * fs
-        wn_long = np.clip((1.0 / period_cutoffs['long']) / nyq, 1e-9, 1 - 1e-9)
-        wn_short = np.clip((1.0 / period_cutoffs['short']) / nyq, 1e-9, 1 - 1e-9)
-        if wn_long >= wn_short:
-            raise ValueError("period_cutoffs['long'] must be greater than period_cutoffs['short'].")
-
-        b_l, a_l = signal.butter(order, wn_long, btype='lowpass')
-        b_b, a_b = signal.butter(order, [wn_long, wn_short], btype='bandpass')
-        b_s, a_s = signal.butter(order, wn_short, btype='highpass')
-
-        padlen = min(3 * max(len(b_l), len(a_l)), arr.size - 1)
-        padlen_arg = padlen if padlen > 0 else 0
-        padtype = 'constant' if padlen > 0 else 'odd'
-
-        return {
-            'long': signal.filtfilt(b_l, a_l, arr, padlen=padlen_arg, padtype=padtype),
-            'band': signal.filtfilt(b_b, a_b, arr, padlen=padlen_arg, padtype=padtype),
-            'short': signal.filtfilt(b_s, a_s, arr, padlen=padlen_arg, padtype=padtype),
+        period_cutoffs = {
+            'Delta': (0.5, 4),
+            'Theta': (4, 8),
+            'Alpha': (8, 13),
+            'Beta': (13, 30),
+            'Gamma': (30, 80)
         }
 
+        arr = np.asarray(data, dtype=float)
+        nyq = 0.5 * fs
+        results = {}
+
+        # Check if data is long enough for the filter order
+        if arr.size < order * 3 + 1:
+            # If data is too short, return zero arrays for all bands
+            for band in period_cutoffs:
+                results[band] = np.zeros_like(arr)
+            return results
+
+        for band, (low, high) in period_cutoffs.items():
+            # Ensure the high cutoff is not above the Nyquist frequency
+            if high >= nyq:
+                # If the entire band is above Nyquist, result is zeros
+                if low >= nyq:
+                    results[band] = np.zeros_like(arr)
+                    continue
+                # Otherwise, cap the high frequency at just below Nyquist
+                high = nyq - 1e-9
+
+            # Normalize frequencies
+            wn_low = low / nyq
+            wn_high = high / nyq
+
+            # Clip values to be within the valid range for the filter design
+            wn_low = np.clip(wn_low, 1e-9, 1 - 1e-9)
+            wn_high = np.clip(wn_high, 1e-9, 1 - 1e-9)
+
+            # Design the bandpass filter
+            b, a = signal.butter(order, [wn_low, wn_high], btype='bandpass')
+
+            # Determine appropriate padding length for filtfilt
+            padlen = min(3 * max(len(b), len(a)), arr.size - 1)
+            
+            # Apply the zero-phase filter
+            filtered_signal = signal.filtfilt(b, a, arr, padlen=padlen)
+            results[band] = filtered_signal
+
+        return results
 
     def draw_curve(self, x_id, y_id, y_pred, path='neuron_comparison.png'):
 
@@ -481,7 +592,7 @@ class DrawNeuron:
         y_pred = y_pred.reshape(self.n_neuron, -1)
         n_train = x_id.shape[1]
 
-        fig, axes = plt.subplots(num_channels * 4, 1, figsize=(8, 3 * num_channels * 4), sharex=True)
+        fig, axes = plt.subplots(num_channels * 6, 1, figsize=(8, 3 * num_channels * 6), sharex=True)
 
         for i in range(num_channels):
             x_id_y_id = np.concatenate([x_id[i], y_id[i]], axis=0)
@@ -490,23 +601,23 @@ class DrawNeuron:
             x_id_y_id_filtered = DrawNeuron.decompose_by_filter(x_id_y_id)
             x_id_y_pred_filtered = DrawNeuron.decompose_by_filter(x_id_y_pred)
 
-            for j in ['full', 'long', 'band', 'short']:
+            for j in ['full'] + list(x_id_y_id_filtered.keys()):
                 if j == 'full':
-                    axes[i*4].plot(x_id[i], label='train', color='blue')
-                    axes[i*4].plot(np.arange(n_train, n_train + y_id.shape[1]), y_id[i], label='ground truth', color='orange')
-                    axes[i*4].plot(np.arange(n_train, n_train + y_pred.shape[1]), y_pred[i], label='forecast', color='green')
-                    axes[i*4].set_title(f'Channel {i}')
-                    axes[i*4].legend(loc='lower left')
+                    axes[i*6].plot(x_id[i], label='train', color='blue')
+                    axes[i*6].plot(np.arange(n_train, n_train + y_id.shape[1]), y_id[i], label='ground truth', color='orange')
+                    axes[i*6].plot(np.arange(n_train, n_train + y_pred.shape[1]), y_pred[i], label='forecast', color='green')
+                    axes[i*6].set_title(f'Channel {i}')
+                    axes[i*6].legend(loc='lower left')
                     # 计算相关系数
                     corr = np.corrcoef(y_id[:, i], y_pred[:, i])[0, 1]
                     # 计算R^2
                     r2 = r2_score(y_id[:, i], y_pred[:, i])
                     # 在子图上标注
-                    axes[i*4].text(0.02, 0.95, f'Corr={corr:.3f}\nR²={r2:.3f}', transform=axes[i*4].transAxes,
+                    axes[i*6].text(0.02, 0.95, f'Corr={corr:.3f}\nR²={r2:.3f}', transform=axes[i*6].transAxes,
                                     fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
                 else:
-                    idx = i * 4 + ['long', 'band', 'short'].index(j) + 1
+                    idx = i * 6 + list(x_id_y_id_filtered.keys()).index(j) + 1
                     x_id_ = x_id_y_id_filtered[j][:x_id.shape[1]]
                     y_id_ = x_id_y_id_filtered[j][x_id.shape[1]:]
                     y_pred_ = x_id_y_pred_filtered[j][x_id.shape[1]:]

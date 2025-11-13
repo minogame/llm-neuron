@@ -19,7 +19,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, Tuple
 
 import torch
 from torch import nn
@@ -354,6 +354,28 @@ class Qwen3Model(Qwen3PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+    def lpf(
+        self,
+        hidden_states: torch.Tensor,
+        freq_threshold: Union[int, tuple[int]] = 1,
+        ):
+        """Applies low-pass filtering to the hidden states."""
+        dtype = hidden_states.dtype
+        # Apply low-pass filtering in the frequency domain using torch
+        # hidden_states: (B, T, C)
+        # freq_threshold: remove this many lowest frequencies
+        hidden_states_fft = torch.fft.fft(hidden_states.float(), dim=1)
+        # Create a mask that zeros out the lowest freq_threshold frequencies
+        mask = torch.ones_like(hidden_states_fft, dtype=torch.bool)
+        if isinstance(freq_threshold, tuple):
+            mask[:, freq_threshold[0]:freq_threshold[1], :] = False
+        else:
+            mask[:, :freq_threshold, :] = False
+        hidden_states_fft = hidden_states_fft * mask
+        hidden_states_filtered = torch.fft.ifft(hidden_states_fft, dim=1).real
+        hidden_states.copy_(hidden_states_filtered).to(dtype)
+        return hidden_states
+
     @check_model_inputs
     @auto_docstring
     def forward(
@@ -365,6 +387,8 @@ class Qwen3Model(Qwen3PreTrainedModel):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        freq_threshold: Optional[float] = None,
+        lpf_layers: Optional[tuple[int]] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -409,7 +433,7 @@ class Qwen3Model(Qwen3PreTrainedModel):
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        for idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask_mapping[decoder_layer.attention_type],
@@ -421,11 +445,15 @@ class Qwen3Model(Qwen3PreTrainedModel):
                 **kwargs,
             )
 
+            if idx in (lpf_layers or []):
+                hidden_states = self.lpf(hidden_states, freq_threshold=freq_threshold)
+
         hidden_states = self.norm(hidden_states)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
         )
+
 
 
 @dataclass
@@ -482,6 +510,9 @@ class Qwen3ForNeuronSignal(Qwen3PreTrainedModel, GenerationMixin):
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        full_hidden_states: bool = False,
+        freq_threshold: Optional[float] = None,
+        lpf_layers: Optional[tuple[int]] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
         
@@ -493,16 +524,25 @@ class Qwen3ForNeuronSignal(Qwen3PreTrainedModel, GenerationMixin):
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             cache_position=cache_position,
+            output_hidden_states=full_hidden_states,
+            freq_threshold=freq_threshold,
+            lpf_layers=lpf_layers,
             **kwargs,
         )
 
-        return CausalLMHiddenStatesWithPast(
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.last_hidden_state,
-            attentions=outputs.attentions,
-        )
+        if full_hidden_states:
+            return CausalLMHiddenStatesWithPast(
+                past_key_values=outputs.past_key_values,
+                hidden_states=outputs.hidden_states,
+                attentions=outputs.attentions,
+            )
+        else:
+            return CausalLMHiddenStatesWithPast(
+                past_key_values=outputs.past_key_values,
+                hidden_states=outputs.last_hidden_state,
+                attentions=outputs.attentions,
+            )
 
-        
 
 @auto_docstring
 class Qwen3ForCausalLM(Qwen3PreTrainedModel, GenerationMixin):

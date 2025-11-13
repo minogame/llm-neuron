@@ -23,11 +23,12 @@ class DataProcessor:
             self.all_med_1 = [ stats[i]['med'][1] for i in range(len(stats)) if iscell[i, 0] == 1 ]
         except Exception:
             try:
+                stats = np.load(stats_path, allow_pickle=True)
                 stats = stats.item()['stat']
                 self.all_med_0 = [ stats[i]['med'][0] for i in range(len(stats)) if iscell[i, 0] == 1 ]
                 self.all_med_1 = [ stats[i]['med'][1] for i in range(len(stats)) if iscell[i, 0] == 1 ]
             except:
-                raise
+                # raise
                 self.all_med_0 = list(range(self.original_data.shape[1]))
                 self.all_med_1 = list(range(self.original_data.shape[1]))
 
@@ -209,9 +210,13 @@ class DataProcessor:
         self.train, self.evalu = train, evalu
         return train, evalu
 
-    def get_max_cov_top_k(self, *args, **kwargs):
+    def get_max_cov_top_k(self, source='train', *args, **kwargs):
         k = self.k
-        F = self.full_train
+        if source == 'train':
+            F = self.full_train
+        else:
+            F = self.original_data
+
         F = F - F.mean(axis=1, keepdims=True)
         F = F / np.std(F, axis=1, keepdims=True)
 
@@ -222,6 +227,7 @@ class DataProcessor:
         cov_sum = np.sum(np.abs(cov_matrix - np.diag(np.diag(cov_matrix))), axis=1)
         idx = np.argsort(cov_sum)[::-1][:k]  # 选择协方差最大的前k个
         self.idx = idx
+        self.max_cov_data = self.original_data[idx, :]
         train, evalu = self.original_data[idx, :self.N_train], self.original_data[idx, self.N_train:]
 
         if self.draw:
@@ -274,7 +280,7 @@ class DataProcessor:
         self.train, self.evalu = train, evalu
         return train, evalu
 
-    def wavlet_denoise(self,):
+    def wavlet_denoise(self, NT=None):
 
         def F(signal):
             wavelet = 'db4'
@@ -306,11 +312,19 @@ class DataProcessor:
 
             return signal_denoised
 
-        for idx in range(self.train.shape[0]):
-            self.train[idx] = F(self.train[idx])
+        if NT is None:
+            for idx in range(self.train.shape[0]):
+                self.train[idx] = F(self.train[idx])
 
-        for idx in range(self.evalu.shape[0]):
-            self.evalu[idx] = F(self.evalu[idx])
+            for idx in range(self.evalu.shape[0]):
+                self.evalu[idx] = F(self.evalu[idx])
+            
+            return
+        else:
+            for idx in range(NT.shape[0]):
+                NT[idx] = F(NT[idx])
+
+            return NT
 
 
     def yield_one_sample_train(self, frames=16, previous=8, quantize=False):
